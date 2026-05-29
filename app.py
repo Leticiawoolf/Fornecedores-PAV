@@ -18,23 +18,6 @@ def normalize_columns(df):
     df.columns = [normalize_text(str(c)).strip().upper() for c in df.columns]
     return df
 
-def onedrive_link_to_direct(onedrive_url):
-    """Converte link de compartilhamento do OneDrive/SharePoint em link de download direto."""
-    if not onedrive_url:
-        return None
-    url = onedrive_url.strip()
-    if not (url.startswith("http://") or url.startswith("https://")):
-        return url
-    if "api.onedrive.com" in url or "download=1" in url:
-        return url
-    try:
-        b64_bytes = base64.b64encode(url.encode('utf-8'))
-        b64_string = b64_bytes.decode('utf-8')
-        clean_b64 = b64_string.replace('+', '-').replace('/', '_').rstrip('=')
-        return f"https://api.onedrive.com/v1.0/shares/u!{clean_b64}/root/content"
-    except Exception:
-        return url
-
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="FORNECEDORES PAV",
@@ -69,12 +52,12 @@ st.markdown('<div class="main-title">🎬 FORNECEDORES PAV</div>', unsafe_allow_
 st.markdown('<div class="subtitle">Filtre e analise a sua base de dados de audiovisual de forma rápida.</div>', unsafe_allow_html=True)
 
 
-# --- 1. ENTRADA DE DADOS (Dupla Opção) ---
-st.sidebar.markdown("### 📥 Entrada de Dados")
-opcao_entrada = st.sidebar.radio(
-    "Escolha a forma de carregar os dados:",
-    ("Upload de Arquivo (.xlsx)", "Link OneDrive/SharePoint")
-)
+# --- 1. ENTRADA DE DADOS (Google Sheets Automático) ---
+st.sidebar.markdown("### 📥 Fonte de Dados")
+st.sidebar.success("Conectado ao Google Sheets 🟢")
+
+if st.sidebar.button("🔄 Atualizar Planilha Agora"):
+    st.cache_data.clear()
 
 linha_cabecalho = st.sidebar.number_input(
     "Linha do Cabeçalho no Excel:", 
@@ -83,36 +66,24 @@ linha_cabecalho = st.sidebar.number_input(
     help="Informe em qual linha da planilha estão escritos os nomes das colunas (NOME, CARGO, etc). O padrão ajustado é 4."
 )
 
-df = None
-origem_dados = ""
+GOOGLE_SHEETS_URL = "https://docs.google.com/spreadsheets/d/1Q9nSJg2_Ps0VLXivYgNpXUL6m-iodOgO-ZswE__zvhc/export?format=xlsx"
 
-def load_excel(source, is_url=False, header_idx=0):
-    """Função para carregar os dados tratando exceções de conexão."""
+@st.cache_data(ttl=60)
+def load_google_sheet(url, header_idx):
+    """Carrega os dados da nuvem com cache de 60 segundos."""
     try:
-        if is_url:
-            direct_url = onedrive_link_to_direct(source)
-            req = urllib.request.Request(direct_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                excel_bytes = response.read()
-            return pd.read_excel(io.BytesIO(excel_bytes), header=header_idx)
-        else:
-            return pd.read_excel(source, header=header_idx)
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            excel_bytes = response.read()
+        return pd.read_excel(io.BytesIO(excel_bytes), header=header_idx)
     except Exception as e:
-        st.sidebar.error(f"Erro ao carregar dados: Verifique o link ou o arquivo.\nDetalhe: {e}")
+        st.sidebar.error(f"Erro ao conectar com a planilha: {e}")
         return None
 
-if opcao_entrada == "Upload de Arquivo (.xlsx)":
-    arquivo = st.sidebar.file_uploader("Faça o upload do arquivo:", type=["xlsx", "xls"])
-    if arquivo:
-        df = load_excel(arquivo, is_url=False, header_idx=linha_cabecalho - 1)
-        origem_dados = "Arquivo Uploaded"
-        
-elif opcao_entrada == "Link OneDrive/SharePoint":
-    link = st.sidebar.text_input("Cole o link de compartilhamento:")
-    st.sidebar.caption("Dica: Use um link de compartilhamento com permissão de visualização.")
-    if link:
-        df = load_excel(link, is_url=True, header_idx=linha_cabecalho - 1)
-        origem_dados = "OneDrive Cloud"
+with st.spinner("Sincronizando dados ao vivo..."):
+    df = load_google_sheet(GOOGLE_SHEETS_URL, header_idx=linha_cabecalho - 1)
+
+origem_dados = "Google Sheets (Conectado)"
 
 # Se os dados foram carregados corretamente
 if df is not None:
