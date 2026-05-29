@@ -1,0 +1,238 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import base64
+import urllib.request
+import io
+import unicodedata
+
+def normalize_text(text):
+    """Remove acentos e caracteres especiais de uma string."""
+    if not isinstance(text, str):
+        return ""
+    nfkd_form = unicodedata.normalize('NFKD', text)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)]).lower()
+
+def normalize_columns(df):
+    """Padroniza os nomes das colunas para facilitar a busca (remove espaços, coloca em maiúsculas)."""
+    df.columns = [normalize_text(str(c)).strip().upper() for c in df.columns]
+    return df
+
+def onedrive_link_to_direct(onedrive_url):
+    """Converte link de compartilhamento do OneDrive/SharePoint em link de download direto."""
+    if not onedrive_url:
+        return None
+    url = onedrive_url.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return url
+    if "api.onedrive.com" in url or "download=1" in url:
+        return url
+    try:
+        b64_bytes = base64.b64encode(url.encode('utf-8'))
+        b64_string = b64_bytes.decode('utf-8')
+        clean_b64 = b64_string.replace('+', '-').replace('/', '_').rstrip('=')
+        return f"https://api.onedrive.com/v1.0/shares/u!{clean_b64}/root/content"
+    except Exception:
+        return url
+
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(
+    page_title="FORNECEDORES PAV",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Estilização
+st.markdown("""
+<style>
+    .main-title {
+        font-family: 'Outfit', 'Inter', sans-serif;
+        font-size: 2.8rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, #007AFF, #00C9FF, #00E676);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    
+    .subtitle {
+        font-family: 'Inter', sans-serif;
+        font-size: 1.1rem;
+        color: #7d8590;
+        margin-bottom: 2rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="main-title">🎬 FORNECEDORES PAV</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Filtre e analise a sua base de dados de audiovisual de forma rápida.</div>', unsafe_allow_html=True)
+
+
+# --- 1. ENTRADA DE DADOS (Dupla Opção) ---
+st.sidebar.markdown("### 📥 Entrada de Dados")
+opcao_entrada = st.sidebar.radio(
+    "Escolha a forma de carregar os dados:",
+    ("Upload de Arquivo (.xlsx)", "Link OneDrive/SharePoint")
+)
+
+linha_cabecalho = st.sidebar.number_input(
+    "Linha do Cabeçalho no Excel:", 
+    min_value=1, 
+    value=4, 
+    help="Informe em qual linha da planilha estão escritos os nomes das colunas (NOME, CARGO, etc). O padrão ajustado é 4."
+)
+
+df = None
+origem_dados = ""
+
+def load_excel(source, is_url=False, header_idx=0):
+    """Função para carregar os dados tratando exceções de conexão."""
+    try:
+        if is_url:
+            direct_url = onedrive_link_to_direct(source)
+            req = urllib.request.Request(direct_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                excel_bytes = response.read()
+            return pd.read_excel(io.BytesIO(excel_bytes), header=header_idx)
+        else:
+            return pd.read_excel(source, header=header_idx)
+    except Exception as e:
+        st.sidebar.error(f"Erro ao carregar dados: Verifique o link ou o arquivo.\nDetalhe: {e}")
+        return None
+
+if opcao_entrada == "Upload de Arquivo (.xlsx)":
+    arquivo = st.sidebar.file_uploader("Faça o upload do arquivo:", type=["xlsx", "xls"])
+    if arquivo:
+        df = load_excel(arquivo, is_url=False, header_idx=linha_cabecalho - 1)
+        origem_dados = "Arquivo Uploaded"
+        
+elif opcao_entrada == "Link OneDrive/SharePoint":
+    link = st.sidebar.text_input("Cole o link de compartilhamento:")
+    st.sidebar.caption("Dica: Use um link de compartilhamento com permissão de visualização.")
+    if link:
+        df = load_excel(link, is_url=True, header_idx=linha_cabecalho - 1)
+        origem_dados = "OneDrive Cloud"
+
+# Se os dados foram carregados corretamente
+if df is not None:
+    df = normalize_columns(df)
+    
+    # 2. ESTRUTURA DAS NOVAS COLUNAS
+    colunas_esperadas = ["NOME", "CARGO", "LOCAL", "TAG", "CONTATO", "ULTIMO PROJETO GLOBO", "CANAL", "DATA"]
+    
+    # Verifica quais colunas faltam
+    missing_cols = [c for c in colunas_esperadas if c not in df.columns]
+    
+    if missing_cols:
+        st.warning(f"⚠️ **Algumas colunas esperadas não foram encontradas:** {', '.join(missing_cols)}")
+        if len(missing_cols) == len(colunas_esperadas):
+            st.error("🚨 **NENHUMA das colunas esperadas foi encontrada!** A tabela aparecerá em branco. Verifique se o cabeçalho da sua planilha está na primeira linha e se os nomes correspondem.")
+        with st.expander("Clique aqui para ver as colunas que o sistema conseguiu ler da sua planilha"):
+            st.write("Colunas detectadas:", list(df.columns))
+            st.write("Se o cabeçalho estiver na linha 2 ou 3 do Excel, o sistema pode ter lido a linha errada.")
+            
+    # Adiciona colunas faltantes para evitar erro
+    for c in colunas_esperadas:
+        if c not in df.columns:
+            df[c] = ""
+            
+    # Garante que exibiremos as colunas exatas na ordem requerida
+    df = df[colunas_esperadas]
+    
+    # --- TRATAMENTO DE CÉLULAS MESCLADAS (MERGED CELLS) ---
+    # Pandas lê células mescladas colocando o valor na primeira linha e NaN nas demais.
+    # Vamos agrupar as linhas adjacentes que pertencem à mesma pessoa.
+    
+    # Trata valores vazios como NaN para a coluna NOME
+    nome_series = df['NOME'].replace(r'^\s*$', np.nan, regex=True)
+    
+    # Cria um ID único de bloco que incrementa a cada NOME não nulo encontrado
+    block_id = nome_series.notna().cumsum()
+    
+    # Remove as linhas do topo que não pertencem a nenhum fornecedor (block_id == 0)
+    df = df[block_id > 0]
+    block_id = block_id[block_id > 0]
+    
+    if not df.empty:
+        # Regras de agrupamento: pega o primeiro valor válido para todas as colunas
+        agg_rules = {c: 'first' for c in colunas_esperadas}
+        # Para a coluna TAG, junta todas as tags do bloco com vírgula, removendo duplicadas
+        agg_rules['TAG'] = lambda x: ', '.join(dict.fromkeys([str(t).strip() for t in x if pd.notna(t) and str(t).strip() != "" and str(t).strip().lower() != "nan"]))
+        
+        df = df.groupby(block_id, as_index=False).agg(agg_rules)
+    
+    
+    # --- 3. NOVOS FILTROS INTERATIVOS ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🎛️ Filtros de Busca")
+    
+    
+    # Filtro 1: Cargo (Texto)
+    cargo_busca = st.sidebar.text_input("Cargo (busca por nome):", help="Digite o nome do cargo, ex: Diretor")
+
+    # Filtro 2: Local (Multiselect)
+    opcoes_local = ["Rio", "SP", "SSA", "Rio/SP", "Belem", "Curitiba"]
+    local_selecionado = st.sidebar.multiselect("Local:", options=opcoes_local)
+
+    # Filtro 3: Tags (Multiselect)
+    opcoes_tags = [
+        "cache acessivel", "bom com elenco", "estilo doc", "rápido", "ágil", 
+        "bom de jogo", "acessível", "organizado", "equipe cara", "caro mas bom", 
+        "difícil retorno", "precisa atenção", "agenda complicada", "enrolado"
+    ]
+    tags_selecionadas = st.sidebar.multiselect("Tags Específicas:", options=opcoes_tags)
+
+    
+    # --- APLICANDO FILTROS ---
+    df_filtrado = df.copy()
+
+    if cargo_busca:
+        df_filtrado = df_filtrado[df_filtrado["CARGO"].astype(str).str.contains(cargo_busca, case=False, na=False)]
+
+    if local_selecionado:
+        # Verifica se o texto na coluna LOCAL bate com as seleções
+        # Como pode haver múltiplos locais ou formatações diferentes, buscamos correspondência
+        df_filtrado = df_filtrado[df_filtrado["LOCAL"].astype(str).apply(
+            lambda x: any(l.lower() in str(x).lower() for l in local_selecionado)
+        )]
+
+    if tags_selecionadas:
+        # A tag no excel pode ser "ágil, organizado, bom de jogo"
+        # Precisamos ver se ALGUMA tag selecionada está dentro do texto
+        df_filtrado = df_filtrado[df_filtrado["TAG"].astype(str).apply(
+            lambda x: any(t.lower() in str(x).lower() for t in tags_selecionadas)
+        )]
+
+    
+    # --- 4. EXIBIÇÃO DOS RESULTADOS ---
+    st.markdown(f"**Registros encontrados:** {len(df_filtrado)}")
+    
+    if not df_filtrado.empty:
+        # Remove as colunas auxiliares de data e meses ociosos para exibição limpa
+        df_visualizacao = df_filtrado[colunas_esperadas]
+        
+        st.dataframe(
+            df_visualizacao,
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Opção de baixar planilha
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_visualizacao.to_excel(writer, index=False)
+            
+        st.download_button(
+            label="📥 Baixar Excel Filtrado",
+            data=buffer.getvalue(),
+            file_name="fornecedores_filtrados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.warning("Nenhum fornecedor encontrado com os filtros selecionados.")
+        
+    st.caption(f"Origem dos dados: {origem_dados}")
+
+else:
+    st.info("👈 Selecione a forma de entrada de dados e carregue uma planilha para começar.")
