@@ -139,7 +139,10 @@ if df is not None:
     st.sidebar.markdown("### 🎛️ Filtros de Busca")
     
     
-    # Filtro 1: Cargo (Texto)
+    # Filtro 1: Nome (Texto)
+    nome_busca = st.sidebar.text_input("Nome (busca):", help="Digite parte do nome do fornecedor")
+    
+    # Filtro 2: Cargo (Texto)
     cargo_busca = st.sidebar.text_input("Cargo (busca por nome):", help="Digite o nome do cargo, ex: Diretor")
 
     # Filtro 2: Local (Multiselect)
@@ -157,6 +160,9 @@ if df is not None:
     
     # --- APLICANDO FILTROS ---
     df_filtrado = df.copy()
+
+    if nome_busca:
+        df_filtrado = df_filtrado[df_filtrado["NOME"].astype(str).str.contains(nome_busca, case=False, na=False)]
 
     if cargo_busca:
         df_filtrado = df_filtrado[df_filtrado["CARGO"].astype(str).str.contains(cargo_busca, case=False, na=False)]
@@ -176,6 +182,10 @@ if df is not None:
         )]
 
     
+    # Ordenar em ordem alfabética pelo NOME
+    if not df_filtrado.empty:
+        df_filtrado = df_filtrado.sort_values(by="NOME", ascending=True)
+
     # --- 4. EXIBIÇÃO DOS RESULTADOS ---
     st.markdown(f"**Registros encontrados:** {len(df_filtrado)}")
     
