@@ -169,16 +169,17 @@ if df is not None:
     # Filtro 2: Cargo (Texto)
     cargo_busca = st.sidebar.text_input("Cargo (busca por nome):", help="Digite o nome do cargo, ex: Diretor")
 
-    # Filtro 2: Local (Multiselect)
-    opcoes_local = ["Rio", "SP", "SSA", "Rio/SP", "Belem", "Curitiba"]
+    # Filtro 3: Local (Multiselect)
+    opcoes_local = sorted([str(loc).strip() for loc in df["LOCAL"].dropna().unique() if str(loc).strip() != ""])
     local_selecionado = st.sidebar.multiselect("Local:", options=opcoes_local)
 
-    # Filtro 3: Tags (Multiselect)
-    opcoes_tags = [
-        "cache acessivel", "bom com elenco", "estilo doc", "rápido", "ágil", 
-        "bom de jogo", "acessível", "organizado", "equipe cara", "caro mas bom", 
-        "difícil retorno", "precisa atenção", "agenda complicada", "enrolado"
-    ]
+    # Filtro 4: Tags (Multiselect)
+    todas_tags = set()
+    for tags in df["TAG"].dropna().astype(str):
+        for tag in tags.split(','):
+            if tag.strip():
+                todas_tags.add(tag.strip())
+    opcoes_tags = sorted(list(todas_tags))
     tags_selecionadas = st.sidebar.multiselect("Tags Específicas:", options=opcoes_tags)
 
     # Filtro 4: Tempo sem Serviço (Slider)
