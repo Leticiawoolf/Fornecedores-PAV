@@ -133,6 +133,30 @@ if df is not None:
         
         df = df.groupby(block_id, as_index=False).agg(agg_rules)
     
+    # Tratar os meses (Data do último trabalho)
+    data_oficial = pd.to_datetime(df["DATA"], errors='coerce', dayfirst=True)
+    data_projeto = pd.to_datetime(df["ULTIMO PROJETO GLOBO"], errors='coerce', dayfirst=True)
+    data_canal = pd.to_datetime(df["CANAL"], errors='coerce', dayfirst=True)
+    
+    df["Data_Validada"] = data_oficial.fillna(data_projeto).fillna(data_canal)
+    hoje = pd.Timestamp.today()
+    
+    # Calcula a diferença em meses apenas para as linhas com data válida
+    df["Meses_Ociosos"] = (hoje.year - df["Data_Validada"].dt.year) * 12 + (hoje.month - df["Data_Validada"].dt.month)
+    df["Meses_Ociosos"] = df["Meses_Ociosos"].fillna(-1).astype(int)
+    
+    def formatar_tempo(meses):
+        if meses == -1:
+            return "Desconhecido"
+        elif meses == 0:
+            return "Menos de 1 mês"
+        elif meses == 1:
+            return "1 mês"
+        else:
+            return f"{meses} meses"
+            
+    df["TEMPO SEM SERVIÇO"] = df["Meses_Ociosos"].apply(formatar_tempo)
+    
     
     # --- 3. NOVOS FILTROS INTERATIVOS ---
     st.sidebar.markdown("---")
@@ -156,6 +180,20 @@ if df is not None:
         "difícil retorno", "precisa atenção", "agenda complicada", "enrolado"
     ]
     tags_selecionadas = st.sidebar.multiselect("Tags Específicas:", options=opcoes_tags)
+
+    # Filtro 4: Tempo sem Serviço (Slider)
+    meses_validos = df[df["Meses_Ociosos"] >= 0]["Meses_Ociosos"]
+    max_meses = int(meses_validos.max()) if not meses_validos.empty else 60
+    max_meses = max(max_meses, 1)
+
+    limite_meses = st.sidebar.slider(
+        "Tempo Máx. Sem Serviço (meses):",
+        min_value=0,
+        max_value=max_meses + 12,
+        value=max_meses + 12
+    )
+    
+    incluir_sem_data = st.sidebar.checkbox("Incluir datas desconhecidas", value=True)
 
     
     # --- APLICANDO FILTROS ---
@@ -181,6 +219,16 @@ if df is not None:
             lambda x: any(t.lower() in str(x).lower() for t in tags_selecionadas)
         )]
 
+    # Aplicar o filtro de meses
+    if incluir_sem_data:
+        df_filtrado = df_filtrado[
+            (df_filtrado["Meses_Ociosos"] <= limite_meses) | (df_filtrado["Meses_Ociosos"] == -1)
+        ]
+    else:
+        df_filtrado = df_filtrado[
+            (df_filtrado["Meses_Ociosos"] >= 0) & (df_filtrado["Meses_Ociosos"] <= limite_meses)
+        ]
+
     
     # Ordenar em ordem alfabética pelo NOME
     if not df_filtrado.empty:
@@ -191,7 +239,7 @@ if df is not None:
     
     if not df_filtrado.empty:
         # Remove as colunas auxiliares de data e meses ociosos para exibição limpa
-        df_visualizacao = df_filtrado[colunas_esperadas]
+        df_visualizacao = df_filtrado[colunas_esperadas + ["TEMPO SEM SERVIÇO"]]
         
         st.dataframe(
             df_visualizacao,
