@@ -166,8 +166,9 @@ if df is not None:
     # Filtro 1: Nome (Texto)
     nome_busca = st.sidebar.text_input("Nome (busca):", help="Digite parte do nome do fornecedor")
     
-    # Filtro 2: Cargo (Texto)
-    cargo_busca = st.sidebar.text_input("Cargo (busca por nome):", help="Digite o nome do cargo, ex: Diretor")
+    # Filtro 2: Cargo (Multiselect Dinâmico)
+    opcoes_cargo = sorted([str(c).strip() for c in df["CARGO"].dropna().unique() if str(c).strip() != ""])
+    cargo_selecionado = st.sidebar.multiselect("Cargo:", options=opcoes_cargo)
 
     # Filtro 3: Local (Multiselect)
     opcoes_local = sorted([str(loc).strip() for loc in df["LOCAL"].dropna().unique() if str(loc).strip() != ""])
@@ -203,8 +204,11 @@ if df is not None:
     if nome_busca:
         df_filtrado = df_filtrado[df_filtrado["NOME"].astype(str).str.contains(nome_busca, case=False, na=False)]
 
-    if cargo_busca:
-        df_filtrado = df_filtrado[df_filtrado["CARGO"].astype(str).str.contains(cargo_busca, case=False, na=False)]
+    if cargo_selecionado:
+        # Busca correspondência para lidar com formatações ou múltiplos cargos
+        df_filtrado = df_filtrado[df_filtrado["CARGO"].astype(str).apply(
+            lambda x: any(c.lower() in str(x).lower() for c in cargo_selecionado)
+        )]
 
     if local_selecionado:
         # Verifica se o texto na coluna LOCAL bate com as seleções
